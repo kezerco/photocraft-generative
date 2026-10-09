@@ -35,6 +35,11 @@ blake3 = { version = "1.8", default-features = false, features = ["pure"] }
 photocraft-codecs = { workspace = true }
 flate2 = { workspace = true }
 
+# The fal.ai client is native-only; the web build must remain offline-capable.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+base64 = "0.22"
+ureq = { version = "2.12", features = ["json"] }
+
 [dev-dependencies]
 photocraft-affinity = { workspace = true, features = ["synth"] }
 # Synthetic camera raw files for the open tests.

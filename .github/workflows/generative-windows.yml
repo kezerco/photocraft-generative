@@ -1,0 +1,38 @@
+# Fork development build: an unsigned portable app to test Generative Fill on Windows.
+name: Generative Fill Windows
+
+on:
+  push:
+    branches: [feature/generative-fill-fal]
+  workflow_dispatch:
+
+jobs:
+  windows-x64:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+      - name: Check and test engine
+        run: |
+          cargo check --locked -p photocraft-ui-egui -p photocraft-engine
+          cargo test --locked -p photocraft-engine --lib generative_cmds
+          cargo test --locked -p photocraft-engine --lib fal_client
+      - name: Build desktop app
+        run: cargo build --release --locked -p photocraft --target x86_64-pc-windows-msvc
+      - name: Stage portable app
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist/portable | Out-Null
+          Copy-Item target/x86_64-pc-windows-msvc/release/photocraft.exe dist/portable/
+          Copy-Item packaging/windows/portable.txt dist/portable/
+      - name: Upload unsigned portable build
+        uses: actions/upload-artifact@v4
+        with:
+          name: photocraft-generative-windows-x64-unsigned
+          path: dist/portable/*
+          if-no-files-found: error

@@ -32,6 +32,8 @@ pub mod edit_cmds;
 pub mod edit_menu_cmds;
 pub mod eraser_cmds;
 pub mod extra_cmds;
+#[cfg(not(target_arch = "wasm32"))]
+mod fal_client;
 pub mod file_cmds;
 pub mod fill_cmds;
 pub mod fill_key_cmds;
@@ -42,6 +44,8 @@ mod frame_cmds;
 pub mod fx_view_cmds;
 pub mod fx_visibility_cmds;
 pub mod gallery_cmds;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod generative_cmds;
 pub mod gradient_fill_cmds;
 pub mod group_view_cmds;
 pub mod hidden_target;

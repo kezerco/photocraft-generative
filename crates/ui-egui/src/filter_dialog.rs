@@ -283,6 +283,9 @@ pub(crate) fn label(key: &str) -> String {
 }
 
 pub(crate) fn source_label(key: &str) -> String {
+    if key == "confirmCharge" {
+        return "Agree to paid API request".into();
+    }
     // camelCase → "Camel Case"
     let mut s = String::new();
     for (i, ch) in key.chars().enumerate() {
@@ -318,6 +321,23 @@ pub fn body(ui: &mut egui::Ui, f: &mut Map<String, Value>) {
             None => return,
         },
     };
+    if cmd == "edit.generativeFill" {
+        let pixels = f.get("__cropPixels").and_then(Value::as_u64).unwrap_or(1);
+        let size = f.get("__cropSize").and_then(Value::as_str).unwrap_or("selected");
+        let price = match f.get("model").and_then(Value::as_str).unwrap_or("flux1Fill") {
+            "flux2Pro" => {
+                "FLUX.2 Pro Edit: from $0.03; input and output megapixels may increase the price. Selection is a guide, not a model mask.".to_string()
+            }
+            "geminiPro" => "Gemini 3 Pro Image Edit: approximately $0.15 per 1K result. Selection is a guide, not a model mask.".to_string(),
+            _ => format!(
+                "FLUX.1 Pro Fill: approximately ${:.2} ($0.05 per started MP). Uses an actual selection mask.",
+                pixels.div_ceil(1_000_000) as f64 * 0.05
+            ),
+        };
+        ui.label(format!("Crop {size} · {price}"));
+        ui.label("The render crop, selection and prompt go to fal.ai only after you confirm. Check current provider pricing.");
+        ui.add_space(8.0);
+    }
     for p in parse_spec(&spec) {
         match p.kind {
             Kind::Range { min, max, default } => {
@@ -528,6 +548,21 @@ pub struct FilterPreviewKey {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn generative_dialog_never_previews_a_paid_request() {
+        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({"width": 32, "height": 32})).unwrap();
+        app.run("select.rect", json!({"x": 8, "y": 8, "width": 8, "height": 8})).unwrap();
+        let id = crate::menus::invoke(&mut app, &egui::Context::default(), "edit.generativeFill", json!({})).unwrap()["dialog"].as_u64().unwrap();
+        let fields = &app.ui.dialogs.iter().find(|d| d.id == id).unwrap().fields;
+        assert!(!fields.contains_key("__preview"));
+        assert_eq!(fields["confirmCharge"], false);
+        assert_eq!(fields["prompt"], "");
+        assert_eq!(fields["__cropSize"], "32 × 32");
+        assert_eq!(fields["model"], "flux1Fill");
+    }
 
     #[test]
     fn parses_registry_notation() {

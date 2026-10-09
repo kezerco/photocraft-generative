@@ -1131,6 +1131,8 @@ fn build() -> Vec<CommandSpec> {
     v.extend(crate::layer_copy_cmds::specs());
     v.extend(crate::prefs::specs());
     v.extend(crate::edit_menu_cmds::specs());
+    #[cfg(not(target_arch = "wasm32"))]
+    v.extend(crate::generative_cmds::specs());
     v.extend(crate::fill_key_cmds::specs());
     v.extend(crate::sample_cmds::specs());
     v.extend(crate::brush_key_cmds::specs());

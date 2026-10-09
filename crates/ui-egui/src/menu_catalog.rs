@@ -95,6 +95,8 @@ pub static CATALOG: &[(&[&str], &str, Option<&str>, &str)] = &[
     (&["Edit"], "Fill…", Some("Shift+F5"), "edit.fill"),
     (&["Edit"], "Stroke…", None, "edit.stroke"),
     (&["Edit"], "Content-Aware Fill…", None, "edit.contentAwareFill"),
+    #[cfg(not(target_arch = "wasm32"))]
+    (&["Edit"], "Generative Fill…", None, "edit.generativeFill"),
     (&["Edit"], "---", None, "---"),
     (&["Edit"], "Content-Aware Scale", Some("Cmd+Alt+Shift+C"), "edit.contentAwareScale"),
     (&["Edit"], "Puppet Warp", None, "edit.puppetWarp"),

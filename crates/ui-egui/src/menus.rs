@@ -369,6 +369,20 @@ pub(crate) fn invoke_unguarded(app: &mut PhotocraftApp, ctx: &egui::Context, id:
             }
             Ok(json!({"dialog": crate::fill_ui::open(app)}))
         }
+        "edit.generativeFill" if params.as_object().is_none_or(|o| o.is_empty()) => {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let (width, height, _) = photocraft_engine::generative_cmds::estimated_cost(&app.session).map_err(|e| e.to_string())?;
+                let dialog = crate::filter_dialog::open(app, id).ok_or("Generative Fill is unavailable")?;
+                if let Some(fields) = app.ui.dialogs.iter_mut().find(|d| d.id == dialog).map(|d| &mut d.fields) {
+                    fields.insert("__cropPixels".into(), json!(u64::from(width) * u64::from(height)));
+                    fields.insert("__cropSize".into(), json!(format!("{width} × {height}")));
+                }
+                Ok(json!({"dialog": dialog}))
+            }
+            #[cfg(target_arch = "wasm32")]
+            Err("Generative Fill is not available in the web build".into())
+        }
         "select.selectAndMask" => Ok(json!({"dialog": crate::filter_dialog::open(app, "select.refineEdge")})),
         // Select › Transform Selection from the menu: the interactive box (with params: the engine).
         "select.transformSelection" if params.as_object().is_none_or(|o| o.is_empty()) => {
