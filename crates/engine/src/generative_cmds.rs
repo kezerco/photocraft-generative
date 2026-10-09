@@ -94,6 +94,9 @@ fn run(s: &mut Session, p: &Value) -> Result<Value> {
         Some(_) => return Err(bad("model must be a string")),
     };
     let model = crate::fal_client::Model::parse(model_name).ok_or_else(|| bad("model must be flux1Fill, flux2Pro or geminiPro"))?;
+    if model != crate::fal_client::Model::FluxFill && p.get("acceptGuidedEdit").and_then(Value::as_bool) != Some(true) {
+        return Err(bad("FLUX.2 Pro and Gemini do not support a true input mask; confirm the selection is a guide with acceptGuidedEdit: true"));
+    }
     if p.get("confirmCharge").and_then(Value::as_bool) != Some(true) {
         return Err(bad("confirm the paid fal.ai request with confirmCharge: true"));
     }
@@ -187,7 +190,7 @@ pub fn specs() -> Vec<CommandSpec> {
         label: "Generative Fill…",
         menu: &["Edit"],
         shortcut: None,
-        params: r##"{"model":"flux1Fill|flux2Pro|geminiPro","prompt":text,"confirmCharge":bool=false}"##,
+        params: r##"{"model":"flux1Fill|flux2Pro|geminiPro","prompt":text,"acceptGuidedEdit":bool=false,"confirmCharge":bool=false}"##,
         enabled,
         run,
         journal: true,
@@ -210,6 +213,8 @@ mod tests {
             json!({"prompt": "   ", "confirmCharge": true}),
             json!({"model": "unlisted", "prompt": "fix", "confirmCharge": true}),
             json!({"model": 0, "prompt": "fix", "confirmCharge": true}),
+            json!({"model": "geminiPro", "prompt": "fix", "confirmCharge": true}),
+            json!({"model": "flux2Pro", "prompt": "fix", "confirmCharge": true}),
         ] {
             assert!(s.execute("edit.generativeFill", params).is_err());
             assert_eq!(s.active().unwrap().history.past_len(), before);
@@ -273,6 +278,24 @@ mod tests {
             s.undo();
             assert_eq!(s.active().unwrap().active_layer, original);
         }
+    }
+
+    #[test]
+    fn soft_mask_coverage_is_preserved_on_generated_layer() {
+        let mut s = Session::new();
+        s.execute("file.new", json!({"width": 8, "height": 8, "depth": 16})).unwrap();
+        let fmt = PixelFormat { alpha: true, ..s.active().unwrap().doc.pixel_format() };
+        let active = s.active().unwrap().active_layer;
+        let mut selection = Surface::new(PixelFormat::GRAY8);
+        selection.write_region(Rect::new(2, 2, 4, 3), &[0.5, 1.0]);
+        let area = Rect::new(1, 1, 5, 4);
+        apply_result(&mut s, &selection, area, fmt, active, &vec![0.0; area.width() as usize * area.height() as usize * 3]).unwrap();
+        let st = s.active().unwrap();
+        let layer = st.doc.layer(st.active_layer.unwrap()).unwrap();
+        let surface = layer.surface().unwrap();
+        assert!((surface.sample_channel(2, 2, 3) - 0.5).abs() < 0.01);
+        assert_eq!(surface.sample_channel(3, 2, 3), 1.0);
+        assert_eq!(surface.sample_channel(1, 2, 3), 0.0);
     }
 
     #[test]

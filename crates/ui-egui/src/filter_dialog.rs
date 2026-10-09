@@ -286,6 +286,9 @@ pub(crate) fn source_label(key: &str) -> String {
     if key == "confirmCharge" {
         return "Agree to paid API request".into();
     }
+    if key == "acceptGuidedEdit" {
+        return "I understand this model cannot obey an exact input mask".into();
+    }
     // camelCase → "Camel Case"
     let mut s = String::new();
     for (i, ch) in key.chars().enumerate() {
@@ -339,6 +342,9 @@ pub fn body(ui: &mut egui::Ui, f: &mut Map<String, Value>) {
         ui.add_space(8.0);
     }
     for p in parse_spec(&spec) {
+        if cmd == "edit.generativeFill" && p.key == "acceptGuidedEdit" && f.get("model").and_then(Value::as_str) == Some("flux1Fill") {
+            continue;
+        }
         match p.kind {
             Kind::Range { min, max, default } => {
                 let mut v = f.get(&p.key).and_then(Value::as_f64).unwrap_or(default as f64) as f32;
