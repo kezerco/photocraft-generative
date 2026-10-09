@@ -39,11 +39,17 @@ impl Model {
 fn request(model: Model, image: &[u8], mask: &[u8], prompt: &str) -> Value {
     let image = image_uri(image);
     let mask = image_uri(mask);
+    // Clarify the frequent short prompt without changing custom prompts.
+    let instruction = if prompt.eq_ignore_ascii_case("make it realistic") {
+        "Make the selected subject photorealistic. Repair visible rendering, texture, face or geometry errors while preserving the subject's recognisable identity, placement, camera perspective and scene lighting."
+    } else {
+        prompt
+    };
     match model {
-        Model::FluxFill => json!({"image_url": image, "mask_url": mask, "prompt": prompt, "output_format": "png"}),
+        Model::FluxFill => json!({"image_url": image, "mask_url": mask, "prompt": instruction, "output_format": "png"}),
         Model::Flux2Pro | Model::GeminiPro => {
             let instruction = format!(
-                "Edit image 1. Image 2 is a black and white selection guide: white is the area to change, black must be preserved. Change only the white area: {prompt}. Maintain the original camera, perspective, materials, texture, lighting, and geometry everywhere else. Return the full edited image with the same composition and aspect ratio."
+                "Edit image 1. Image 2 is a black and white selection guide: white is the subject to edit, black is context to preserve. Change the selected subject according to: {instruction} Preserve the recognisable subject, original camera, perspective, materials, lighting, and surrounding scene. Return the full edited image with the same composition and aspect ratio."
             );
             json!({"image_urls": [image, mask], "prompt": instruction, "output_format": "png"})
         }
@@ -125,6 +131,14 @@ mod tests {
             }
         }
         assert!(Model::parse("unknown").is_none());
+    }
+
+    #[test]
+    fn short_realism_prompt_keeps_the_selected_subject_recognisable() {
+        let body = request(Model::FluxFill, b"image", b"mask", "Make it realistic");
+        assert!(body["prompt"].as_str().unwrap().contains("preserving the subject's recognisable identity"));
+        let custom = request(Model::FluxFill, b"image", b"mask", "Make the tree autumnal");
+        assert_eq!(custom["prompt"], "Make the tree autumnal");
     }
 
     #[test]

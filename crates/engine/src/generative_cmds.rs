@@ -1,5 +1,5 @@
-//! First native Generative Fill backend: masked FLUX.1 Pro Fill via fal.ai.
-//! Results never replace the render; a selected-only pixel layer is added in one undo step.
+//! Native fal.ai generative fill and guided image editing.
+//! Results never replace the render; a soft-edged selection layer is added in one undo step.
 
 use photocraft_codecs::{ChannelLayout, EncodeOptions, Format, Image};
 use photocraft_color::{ColorMode, PixelFormat, SampleType};
@@ -56,6 +56,24 @@ pub fn estimated_cost(s: &Session) -> Result<(u32, u32, f64)> {
     Ok((area.width(), area.height(), megapixels as f64 * 0.05))
 }
 
+/// The provider can extend the subject a little beyond the original selection. The input
+/// receives a solid expanded mask; the returned layer has a soft edge for blending. At zero
+/// pixels, keep the original selection exactly (including its antialiasing).
+fn expanded_masks(selection: &Surface, area: Rect, edge: u32) -> (Surface, Surface) {
+    if edge == 0 {
+        return (selection.clone(), selection.clone());
+    }
+    let (w, h) = (area.width() as usize, area.height() as usize);
+    let original = selection.read_region(area);
+    let expanded = photocraft_algo::selection::expand(&original, w, h, edge as f32);
+    let blended = photocraft_algo::selection::feather(&expanded, w, h, 2.0);
+    let mut input = Surface::new(PixelFormat::GRAY8);
+    input.write_region(area, &expanded);
+    let mut output = Surface::new(PixelFormat::GRAY8);
+    output.write_region(area, &blended);
+    (input, output)
+}
+
 fn encode_input(doc: &photocraft_doc::Document, selection: &Surface, area: Rect) -> Result<(Vec<u8>, Vec<u8>)> {
     let fmt = PixelFormat::new(ColorMode::Rgb, doc.pixel_format().sample, true);
     let surface = photocraft_compose::flatten_to_surface(doc, fmt, Some([1.0; 3]));
@@ -94,6 +112,10 @@ fn run(s: &mut Session, p: &Value) -> Result<Value> {
         Some(_) => return Err(bad("model must be a string")),
     };
     let model = crate::fal_client::Model::parse(model_name).ok_or_else(|| bad("model must be flux1Fill, flux2Pro or geminiPro"))?;
+    let edge = match p.get("edgePixels") {
+        None => 12,
+        Some(v) => v.as_f64().filter(|n| n.is_finite() && (0.0..=24.0).contains(n)).ok_or_else(|| bad("edgePixels must be 0–24"))?.round() as u32,
+    };
     if model != crate::fal_client::Model::FluxFill && p.get("acceptGuidedEdit").and_then(Value::as_bool) != Some(true) {
         return Err(bad("FLUX.2 Pro and Gemini do not support a true input mask; confirm the selection is a guide with acceptGuidedEdit: true"));
     }
@@ -109,7 +131,6 @@ fn run(s: &mut Session, p: &Value) -> Result<Value> {
     let area = crop(&selection, doc.bounds())?;
     let fmt = PixelFormat { alpha: true, ..doc.pixel_format() };
     let active = d.active_layer;
-    let apply_selection = selection.clone();
     crate::jobs::run(
         s,
         "Generative Fill",
@@ -117,7 +138,8 @@ fn run(s: &mut Session, p: &Value) -> Result<Value> {
         move |ctx| {
             ctx.check()?;
             ctx.progress(0.1, "Preparing selection");
-            let (image, mask) = encode_input(&doc, &selection, area)?;
+            let (model_mask, overlay_mask) = expanded_masks(&selection, area, edge);
+            let (image, mask) = encode_input(&doc, &model_mask, area)?;
             ctx.check()?;
             ctx.progress(0.3, "Waiting for fal.ai");
             let bytes = crate::fal_client::fill(model, &image, &mask, &prompt).map_err(EngineError::Other)?;
@@ -151,9 +173,9 @@ fn run(s: &mut Session, p: &Value) -> Result<Value> {
                 pixels
             };
             ctx.progress(0.9, "Preparing new layer");
-            Ok(pixels)
+            Ok((pixels, overlay_mask))
         },
-        move |s, pixels: Vec<f32>| apply_result(s, &apply_selection, area, fmt, active, &pixels),
+        move |s, (pixels, overlay_mask): (Vec<f32>, Surface)| apply_result(s, &overlay_mask, area, fmt, active, &pixels),
     )
 }
 
@@ -190,7 +212,7 @@ pub fn specs() -> Vec<CommandSpec> {
         label: "Generative Fill…",
         menu: &["Edit"],
         shortcut: None,
-        params: r##"{"model":"flux1Fill|flux2Pro|geminiPro","prompt":text,"acceptGuidedEdit":bool=false,"confirmCharge":bool=false}"##,
+        params: r##"{"model":"flux1Fill|flux2Pro|geminiPro","prompt":text,"edgePixels":0..24=12,"acceptGuidedEdit":bool=false,"confirmCharge":bool=false}"##,
         enabled,
         run,
         journal: true,
@@ -213,6 +235,7 @@ mod tests {
             json!({"prompt": "   ", "confirmCharge": true}),
             json!({"model": "unlisted", "prompt": "fix", "confirmCharge": true}),
             json!({"model": 0, "prompt": "fix", "confirmCharge": true}),
+            json!({"prompt": "fix", "edgePixels": 100, "confirmCharge": true}),
             json!({"model": "geminiPro", "prompt": "fix", "confirmCharge": true}),
             json!({"model": "flux2Pro", "prompt": "fix", "confirmCharge": true}),
         ] {
@@ -278,6 +301,21 @@ mod tests {
             s.undo();
             assert_eq!(s.active().unwrap().active_layer, original);
         }
+    }
+
+    #[test]
+    fn expanded_selection_gives_subject_room_without_changing_distant_pixels() {
+        let area = Rect::new(0, 0, 80, 80);
+        let mut original = Surface::new(PixelFormat::GRAY8);
+        original.write_region(Rect::new(39, 39, 41, 41), &[1.0; 4]);
+        let (input, output) = expanded_masks(&original, area, 12);
+        assert_eq!(input.sample_channel(39, 39, 0), 1.0);
+        assert!(input.sample_channel(50, 40, 0) > 0.5);
+        assert!(output.sample_channel(50, 40, 0) > 0.0);
+        assert_eq!(output.sample_channel(0, 0, 0), 0.0);
+        let (input, output) = expanded_masks(&original, area, 0);
+        assert_eq!(input.sample_channel(50, 40, 0), 0.0);
+        assert_eq!(output.sample_channel(39, 39, 0), 1.0);
     }
 
     #[test]

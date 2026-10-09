@@ -214,6 +214,7 @@ pub fn open(app: &mut PhotocraftApp, command: &str) -> Option<u64> {
             Kind::Choice(c) => json!(c.first().cloned().unwrap_or_default()),
             Kind::Bool(default) => json!(default),
             Kind::Int { default } => json!(default),
+            Kind::Text if command == "edit.generativeFill" && p.key == "prompt" => json!("Make it realistic"),
             Kind::Text => json!(""),
             Kind::Document => json!(-1),
             // Identity kernel: 1 in the centre.
@@ -338,6 +339,7 @@ pub fn body(ui: &mut egui::Ui, f: &mut Map<String, Value>) {
             ),
         };
         ui.label(format!("Crop {size} · {price}"));
+        ui.label("Edge Pixels allows a small, softly blended extension past the selection (set 0 for exact clipping).");
         ui.label("The render crop, selection and prompt go to fal.ai only after you confirm. Check current provider pricing.");
         ui.add_space(8.0);
     }
@@ -565,7 +567,8 @@ mod tests {
         let fields = &app.ui.dialogs.iter().find(|d| d.id == id).unwrap().fields;
         assert!(!fields.contains_key("__preview"));
         assert_eq!(fields["confirmCharge"], false);
-        assert_eq!(fields["prompt"], "");
+        assert_eq!(fields["prompt"], "Make it realistic");
+        assert_eq!(fields["edgePixels"], 12.0);
         assert_eq!(fields["__cropSize"], "32 × 32");
         assert_eq!(fields["model"], "flux1Fill");
     }
