@@ -227,42 +227,52 @@ mod tests {
 
     #[test]
     fn request_mask_and_image_have_matching_crop_dimensions() {
-        let mut s = Session::new();
-        s.execute("file.new", json!({"width": 32, "height": 32, "background": "white"})).unwrap();
-        s.execute("select.rect", json!({"x": 10, "y": 10, "width": 4, "height": 4})).unwrap();
-        let doc = &s.active().unwrap().doc;
-        let selection = doc.selection.as_ref().unwrap();
-        let area = crop(selection, doc.bounds()).unwrap();
-        let (image, mask) = encode_input(doc, selection, area).unwrap();
-        let image = photocraft_codecs::decode(&image).unwrap();
-        let mask = photocraft_codecs::decode(&mask).unwrap();
-        assert_eq!((image.width(), image.height()), (mask.width(), mask.height()));
-        let at = |x: u32, y: u32| (y * mask.width() + x) as usize;
-        assert_eq!(mask.sample_normalized(at(10, 10)), 1.0);
-        assert_eq!(mask.sample_normalized(at(0, 0)), 0.0);
+        for depth in [8, 16] {
+            let mut s = Session::new();
+            s.execute("file.new", json!({"width": 32, "height": 32, "depth": depth, "background": "white"})).unwrap();
+            s.execute("select.rect", json!({"x": 10, "y": 10, "width": 4, "height": 4})).unwrap();
+            let doc = &s.active().unwrap().doc;
+            let selection = doc.selection.as_ref().unwrap();
+            let area = crop(selection, doc.bounds()).unwrap();
+            let (image, mask) = encode_input(doc, selection, area).unwrap();
+            let image = photocraft_codecs::decode(&image).unwrap();
+            let mask = photocraft_codecs::decode(&mask).unwrap();
+            assert_eq!((image.width(), image.height()), (mask.width(), mask.height()));
+            let at = |x: u32, y: u32| (y * mask.width() + x) as usize;
+            assert_eq!(mask.sample_normalized(at(10, 10)), 1.0);
+            assert_eq!(mask.sample_normalized(at(0, 0)), 0.0);
+        }
     }
 
     #[test]
     fn generated_layer_respects_selection_and_undo() {
-        let mut s = Session::new();
-        s.execute("file.new", json!({"width": 16, "height": 16, "background": "white"})).unwrap();
-        s.execute("select.rect", json!({"x": 6, "y": 6, "width": 2, "height": 2})).unwrap();
-        let doc = s.active().unwrap();
-        let original = doc.active_layer;
-        let selection = doc.doc.selection.clone().unwrap();
-        let fmt = PixelFormat { alpha: true, ..doc.doc.pixel_format() };
-        let area = Rect::new(4, 4, 10, 10);
-        let pixels = vec![0.0; 6 * 6 * 3];
-        assert!(apply_result(&mut s, &selection, area, fmt, original, &pixels[..2]).is_err());
-        let result = apply_result(&mut s, &selection, area, fmt, original, &pixels).unwrap();
-        let id = s.active().unwrap().active_layer.unwrap();
-        assert_eq!(result["layer"], json!(id));
-        let layer = s.active().unwrap().doc.layer(id).unwrap();
-        assert_eq!(layer.surface().unwrap().sample_channel(5, 5, 3), 0.0);
-        assert_eq!(layer.surface().unwrap().sample_channel(6, 6, 3), 1.0);
-        assert!(s.active().unwrap().doc.layer(original.unwrap()).is_some());
-        s.undo();
-        assert_eq!(s.active().unwrap().active_layer, original);
+        for depth in [8, 16] {
+            let mut s = Session::new();
+            s.execute("file.new", json!({"width": 16, "height": 16, "depth": depth, "background": "white"})).unwrap();
+            s.execute("select.rect", json!({"x": 6, "y": 6, "width": 2, "height": 2})).unwrap();
+            let doc = s.active().unwrap();
+            let original = doc.active_layer;
+            let selection = doc.doc.selection.clone().unwrap();
+            let fmt = PixelFormat { alpha: true, ..doc.doc.pixel_format() };
+            let area = Rect::new(4, 4, 10, 10);
+            let before = photocraft_compose::flatten_to_surface(&doc.doc, fmt, None);
+            let pixels = vec![0.0; 6 * 6 * 3];
+            assert!(apply_result(&mut s, &selection, area, fmt, original, &pixels[..2]).is_err());
+            let result = apply_result(&mut s, &selection, area, fmt, original, &pixels).unwrap();
+            let id = s.active().unwrap().active_layer.unwrap();
+            assert_eq!(result["layer"], json!(id));
+            let layer = s.active().unwrap().doc.layer(id).unwrap();
+            assert_eq!(layer.surface().unwrap().sample_channel(5, 5, 3), 0.0, "depth {depth}");
+            assert_eq!(layer.surface().unwrap().sample_channel(6, 6, 3), 1.0, "depth {depth}");
+            assert_eq!(layer.surface().unwrap().format().sample, fmt.sample);
+            let after = photocraft_compose::flatten_to_surface(&s.active().unwrap().doc, fmt, None);
+            assert_eq!(after.pixel(5, 5), before.pixel(5, 5), "outside selection changed at depth {depth}");
+            assert_eq!(after.pixel(9, 9), before.pixel(9, 9), "outside selection changed at depth {depth}");
+            assert!(after.sample_channel(6, 6, 0) < 0.1, "selected pixel was not replaced at depth {depth}");
+            assert!(s.active().unwrap().doc.layer(original.unwrap()).is_some());
+            s.undo();
+            assert_eq!(s.active().unwrap().active_layer, original);
+        }
     }
 
     #[test]
