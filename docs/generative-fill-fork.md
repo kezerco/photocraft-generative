@@ -25,11 +25,12 @@ The `Generative Fill Windows` GitHub Actions workflow can later produce an **uns
 Register an account at [fal.ai](https://fal.ai), add a small prepaid balance, then create an API key. In PowerShell, from the directory containing the unsigned executable:
 
 ```powershell
-$env:FAL_KEY = 'your-key-here'
+$env:FAL_KEY = [System.Net.NetworkCredential]::new('', (Read-Host 'fal.ai API key' -AsSecureString)).Password
 .\photocraft.exe
+Remove-Item Env:FAL_KEY
 ```
 
-This environment variable belongs to the launched process; the fork does not store it in preferences or documents. Do not put keys in commands, screenshots, GitHub issues, GitHub Actions, or committed files. Starting the app from Explorer won't inherit a key set only inside PowerShell.
+This environment variable belongs to the launched process; the fork does not store it in preferences or documents. The prompt avoids putting the key in your PowerShell history. Do not put keys in PhotoCraft command JSON, screenshots, GitHub issues, GitHub Actions, or committed files. Starting the app from Explorer won't inherit a key set only inside PowerShell.
 
 1. Save a copy of your render, select a small region, then choose **Edit › Generative Fill…**.
 2. Pick a model, type the prompt and tick **Agree to paid API request**; press OK. If you choose FLUX.2 or Gemini, a second checkbox explicitly warns that the selection is not an exact model mask. The dialog shows the crop dimensions and indicative pricing. Check the live provider prices for [masked FLUX.1 Fill](https://fal.ai/models/fal-ai/flux-pro/v1/fill), [FLUX.2 Pro Edit](https://fal.ai/models/fal-ai/flux-2-pro/edit) or [Gemini Pro Edit](https://fal.ai/models/fal-ai/nano-banana-pro/edit) before spending.
