@@ -52,6 +52,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn cancel_discards_uncommitted_key_without_saving() {
+        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), Default::default());
+        let fields = serde_json::from_value::<Map<String, Value>>(serde_json::json!({"__command":"edit.generativeFill"})).unwrap();
+        let id = app.ui.open_dialog(crate::state::DialogKind::Command, fields);
+        app.fal_key_draft = "secret-never-save".into();
+        crate::dialogs::cancel(&mut app, id).unwrap();
+        assert!(app.fal_key_draft.is_empty());
+    }
+
+    #[test]
     fn key_is_not_a_command_parameter_or_dialog_field() {
         let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), Default::default());
         app.fal_key_draft = "secret-never-serialize".into();
