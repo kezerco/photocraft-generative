@@ -52,7 +52,10 @@ pub fn estimated_cost(s: &Session) -> Result<(u32, u32, f64)> {
     let doc = &s.active().ok_or(EngineError::NoDocument)?.doc;
     let selection = doc.selection.as_ref().ok_or_else(|| bad("select the area to fill first"))?;
     let area = crop(selection, doc.bounds())?;
-    let megapixels = (u64::from(area.width()) * u64::from(area.height())).div_ceil(1_000_000);
+    // FLUX.1 Fill receives a square padded input to preserve aspect when the provider
+    // chooses its own (often different) output resolution.
+    let side = area.width().max(area.height());
+    let megapixels = (u64::from(side) * u64::from(side)).div_ceil(1_000_000);
     Ok((area.width(), area.height(), megapixels as f64 * 0.05))
 }
 
@@ -74,27 +77,81 @@ fn expanded_masks(selection: &Surface, area: Rect, edge: u32) -> (Surface, Surfa
     (input, output)
 }
 
-fn encode_input(doc: &photocraft_doc::Document, selection: &Surface, area: Rect) -> Result<(Vec<u8>, Vec<u8>)> {
+fn encode_input(doc: &photocraft_doc::Document, selection: &Surface, area: Rect, model: crate::fal_client::Model) -> Result<(Vec<u8>, Vec<u8>)> {
     let fmt = PixelFormat::new(ColorMode::Rgb, doc.pixel_format().sample, true);
     let surface = photocraft_compose::flatten_to_surface(doc, fmt, Some([1.0; 3]));
     let pixels = surface.read_region(area);
-    let mut rgb = Vec::with_capacity((area.width() as usize) * (area.height() as usize) * 3);
-    let mut mask = Vec::with_capacity((area.width() as usize) * (area.height() as usize));
-    for (i, px) in pixels.as_chunks::<4>().0.iter().enumerate() {
-        let x = area.x0 + (i % area.width() as usize) as i32;
-        let y = area.y0 + (i / area.width() as usize) as i32;
-        rgb.extend(px[..3].iter().map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8));
-        mask.push((selection.sample_channel(x, y, 0).clamp(0.0, 1.0) * 255.0).round() as u8);
+    let (w, h) = (area.width() as usize, area.height() as usize);
+    if w == 0 || h == 0 {
+        return Err(bad("cannot send an empty render crop"));
     }
-    let w = area.width();
-    let h = area.height();
-    let image = Image::from_u8(w, h, ChannelLayout::Rgb, rgb).map_err(|_| bad("could not prepare input image"))?;
-    let mask = Image::from_u8(w, h, ChannelLayout::Gray, mask).map_err(|_| bad("could not prepare selection mask"))?;
+    let side = if model == crate::fal_client::Model::FluxFill { w.max(h) } else { w };
+    let (out_w, out_h) = (side, if model == crate::fal_client::Model::FluxFill { side } else { h });
+    let (pad_x, pad_y) = ((out_w - w) / 2, (out_h - h) / 2);
+    let mut rgb = Vec::with_capacity(out_w * out_h * 3);
+    let mut mask = Vec::with_capacity(out_w * out_h);
+    for oy in 0..out_h {
+        for ox in 0..out_w {
+            // Repeat the crop's edge pixels in the padding so the model sees natural context,
+            // but never allow it to edit the padding itself.
+            let (x, y) = (ox.saturating_sub(pad_x).min(w - 1), oy.saturating_sub(pad_y).min(h - 1));
+            let i = (y * w + x) * 4;
+            let px = pixels.get(i..i + 3).ok_or_else(|| bad("could not read the render crop"))?;
+            rgb.extend(px.iter().map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8));
+            let inside = ox >= pad_x && ox < pad_x + w && oy >= pad_y && oy < pad_y + h;
+            let coverage = if inside { selection.sample_channel(area.x0 + x as i32, area.y0 + y as i32, 0) } else { 0.0 };
+            mask.push((coverage.clamp(0.0, 1.0) * 255.0).round() as u8);
+        }
+    }
+    let image = Image::from_u8(out_w as u32, out_h as u32, ChannelLayout::Rgb, rgb).map_err(|_| bad("could not prepare input image"))?;
+    let mask = Image::from_u8(out_w as u32, out_h as u32, ChannelLayout::Gray, mask).map_err(|_| bad("could not prepare selection mask"))?;
     let opts = EncodeOptions::default();
     Ok((
         photocraft_codecs::encode(&image, Format::Png, &opts).map_err(|_| bad("could not encode input image"))?,
         photocraft_codecs::encode(&mask, Format::Png, &opts).map_err(|_| bad("could not encode selection mask"))?,
     ))
+}
+
+/// Map a provider-selected output resolution back to the *same document coordinates*.
+/// Masked fill sends square padded input, so resize to that square before removing padding;
+/// never stretch a rectangular returned image into the selection (that would distort faces).
+fn align_output(image: &Image, area: Rect, model: crate::fal_client::Model) -> Result<Vec<f32>> {
+    if !matches!(image.layout(), ChannelLayout::Rgb | ChannelLayout::Rgba) {
+        return Err(bad("fal.ai returned an unsupported colour format"));
+    }
+    let (w, h, channels) = (area.width() as usize, area.height() as usize, image.layout().channels());
+    if w == 0 || h == 0 {
+        return Err(bad("cannot place generated pixels into an empty crop"));
+    }
+    let square = model == crate::fal_client::Model::FluxFill;
+    let (target_w, target_h) = if square { (w.max(h), w.max(h)) } else { (w, h) };
+    let (iw, ih) = (image.width() as usize, image.height() as usize);
+    let expected = target_w as f64 / target_h as f64;
+    let actual = iw as f64 / ih as f64;
+    if (actual / expected - 1.0).abs() > 0.05 {
+        // Some fill backends may discard the padding and return the original crop aspect.
+        // That is unambiguous only when the returned ratio agrees with the document crop.
+        let crop_ratio = w as f64 / h as f64;
+        if square && (actual / crop_ratio - 1.0).abs() <= 0.05 {
+            return Ok(photocraft_algo::seam::resize_bilinear(iw, ih, channels, &image.to_normalized(), w, h));
+        }
+        let shape = if square { "square or the crop's aspect ratio" } else { "the crop's aspect ratio" };
+        return Err(bad(&format!(
+            "fal.ai returned {iw}×{ih}, but expected {shape} input {target_w}×{target_h} for document crop {w}×{h}; document unchanged (provider may still charge)"
+        )));
+    }
+    let data = image.to_normalized();
+    let scaled = if iw == target_w && ih == target_h { data } else { photocraft_algo::seam::resize_bilinear(iw, ih, channels, &data, target_w, target_h) };
+    if !square {
+        return Ok(scaled);
+    }
+    let (pad_x, pad_y) = ((target_w - w) / 2, (target_h - h) / 2);
+    let mut cropped = Vec::with_capacity(w * h * channels);
+    for y in 0..h {
+        let start = ((y + pad_y) * target_w + pad_x) * channels;
+        cropped.extend_from_slice(scaled.get(start..start + w * channels).ok_or_else(|| bad("fal.ai result could not be aligned with the render"))?);
+    }
+    Ok(cropped)
 }
 
 fn run(s: &mut Session, p: &Value) -> Result<Value> {
@@ -139,7 +196,7 @@ fn run(s: &mut Session, p: &Value) -> Result<Value> {
             ctx.check()?;
             ctx.progress(0.1, "Preparing selection");
             let (model_mask, overlay_mask) = expanded_masks(&selection, area, edge);
-            let (image, mask) = encode_input(&doc, &model_mask, area)?;
+            let (image, mask) = encode_input(&doc, &model_mask, area, model)?;
             ctx.check()?;
             ctx.progress(0.3, "Waiting for fal.ai");
             let bytes = crate::fal_client::fill(model, &image, &mask, &prompt).map_err(EngineError::Other)?;
@@ -147,31 +204,7 @@ fn run(s: &mut Session, p: &Value) -> Result<Value> {
             let limits = photocraft_codecs::Limits { max_width: 4096, max_height: 4096, max_pixels: 8_000_000, max_alloc: 128 * 1024 * 1024 };
             let image = photocraft_codecs::decode_with(&bytes, &photocraft_codecs::DecodeOptions { limits, ..Default::default() })
                 .map_err(|_| bad("fal.ai returned an invalid or oversized image"))?;
-            if !matches!(image.layout(), ChannelLayout::Rgb | ChannelLayout::Rgba) {
-                return Err(bad("fal.ai returned an unsupported colour format"));
-            }
-            let pixels = image.to_normalized();
-            let channels = image.layout().channels();
-            let pixels = if image.width() != area.width() || image.height() != area.height() {
-                if model == crate::fal_client::Model::FluxFill {
-                    return Err(bad("masked fill returned the wrong size; document unchanged (provider may still charge)"));
-                }
-                let expected = area.width() as f64 / area.height() as f64;
-                let actual = image.width() as f64 / image.height() as f64;
-                if (actual / expected - 1.0).abs() > 0.05 {
-                    return Err(bad("model changed the crop aspect ratio; document unchanged (provider may still charge)"));
-                }
-                photocraft_algo::seam::resize_bilinear(
-                    image.width() as usize,
-                    image.height() as usize,
-                    channels,
-                    &pixels,
-                    area.width() as usize,
-                    area.height() as usize,
-                )
-            } else {
-                pixels
-            };
+            let pixels = align_output(&image, area, model)?;
             ctx.progress(0.9, "Preparing new layer");
             Ok((pixels, overlay_mask))
         },
@@ -256,19 +289,60 @@ mod tests {
     #[test]
     fn request_mask_and_image_have_matching_crop_dimensions() {
         for depth in [8, 16] {
-            let mut s = Session::new();
-            s.execute("file.new", json!({"width": 32, "height": 32, "depth": depth, "background": "white"})).unwrap();
-            s.execute("select.rect", json!({"x": 10, "y": 10, "width": 4, "height": 4})).unwrap();
-            let doc = &s.active().unwrap().doc;
-            let selection = doc.selection.as_ref().unwrap();
-            let area = crop(selection, doc.bounds()).unwrap();
-            let (image, mask) = encode_input(doc, selection, area).unwrap();
-            let image = photocraft_codecs::decode(&image).unwrap();
-            let mask = photocraft_codecs::decode(&mask).unwrap();
-            assert_eq!((image.width(), image.height()), (mask.width(), mask.height()));
-            let at = |x: u32, y: u32| (y * mask.width() + x) as usize;
-            assert_eq!(mask.sample_normalized(at(10, 10)), 1.0);
-            assert_eq!(mask.sample_normalized(at(0, 0)), 0.0);
+            for (width, height) in [(32, 32), (32, 16), (16, 32)] {
+                let mut s = Session::new();
+                s.execute("file.new", json!({"width": width, "height": height, "depth": depth, "background": "white"})).unwrap();
+                s.execute("select.rect", json!({"x": 10, "y": 10, "width": 4, "height": 4})).unwrap();
+                let doc = &s.active().unwrap().doc;
+                let selection = doc.selection.as_ref().unwrap();
+                let area = crop(selection, doc.bounds()).unwrap();
+                let (image, mask) = encode_input(doc, selection, area, crate::fal_client::Model::FluxFill).unwrap();
+                let image = photocraft_codecs::decode(&image).unwrap();
+                let mask = photocraft_codecs::decode(&mask).unwrap();
+                let side = width.max(height) as u32;
+                assert_eq!((image.width(), image.height()), (side, side));
+                assert_eq!((mask.width(), mask.height()), (side, side));
+                let at = |x: u32, y: u32| (y * mask.width() + x) as usize;
+                let (pad_x, pad_y) = ((side - width as u32) / 2, (side - height as u32) / 2);
+                assert_eq!(mask.sample_normalized(at(10 + pad_x, 10 + pad_y)), 1.0);
+                assert_eq!(mask.sample_normalized(at(0, 0)), 0.0);
+                let (guided, _) = encode_input(doc, selection, area, crate::fal_client::Model::GeminiPro).unwrap();
+                let guided = photocraft_codecs::decode(&guided).unwrap();
+                assert_eq!((guided.width(), guided.height()), (width as u32, height as u32));
+            }
+        }
+    }
+
+    #[test]
+    fn masked_output_resizes_and_unpads_without_distorting_the_crop() {
+        let area = Rect::new(0, 0, 6, 4);
+        let side = 6;
+        // Provider returns double resolution; mark each input-space row with a different red
+        // value. Cropping away the padded top/bottom must keep rows 1–4, in the same order.
+        let data: Vec<u8> = (0..12).flat_map(|y| (0..12).flat_map(move |_| [((y / 2) * 30) as u8, 0, 0])).collect();
+        let image = Image::from_u8(12, 12, ChannelLayout::Rgb, data).unwrap();
+        let result = align_output(&image, area, crate::fal_client::Model::FluxFill).unwrap();
+        assert_eq!(result.len(), (area.width() * area.height() * 3) as usize);
+        assert!((result[0] - 30.0 / 255.0).abs() < 0.01);
+        assert!((result[(3 * 6 * 3) as usize] - 120.0 / 255.0).abs() < 0.01);
+        let rectangular = Image::from_u8(12, 8, ChannelLayout::Rgb, vec![0; 12 * 8 * 3]).unwrap();
+        assert_eq!(align_output(&rectangular, area, crate::fal_client::Model::FluxFill).unwrap().len(), result.len());
+        let invalid = Image::from_u8(12, 7, ChannelLayout::Rgb, vec![0; 12 * 7 * 3]).unwrap();
+        let err = align_output(&invalid, area, crate::fal_client::Model::FluxFill).unwrap_err().to_string();
+        assert!(err.contains("12×7") && err.contains(&format!("{side}×{side}")), "{err}");
+    }
+
+    #[test]
+    fn guided_models_accept_resized_output_but_reject_unrelated_aspects() {
+        let area = Rect::new(0, 0, 6, 4);
+        let good = Image::from_u8(12, 8, ChannelLayout::Rgb, vec![80; 12 * 8 * 3]).unwrap();
+        let bad = Image::from_u8(12, 12, ChannelLayout::Rgb, vec![0; 12 * 12 * 3]).unwrap();
+        for model in [crate::fal_client::Model::Flux2Pro, crate::fal_client::Model::GeminiPro] {
+            let result = align_output(&good, area, model).unwrap();
+            assert_eq!(result.len(), 6 * 4 * 3);
+            assert!((result[0] - 80.0 / 255.0).abs() < 0.01);
+            let error = align_output(&bad, area, model).unwrap_err().to_string();
+            assert!(error.contains("12×12") && error.contains("6×4"), "{model:?}: {error}");
         }
     }
 

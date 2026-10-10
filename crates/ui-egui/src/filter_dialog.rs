@@ -326,7 +326,7 @@ pub fn body(ui: &mut egui::Ui, f: &mut Map<String, Value>) {
         },
     };
     if cmd == "edit.generativeFill" {
-        let pixels = f.get("__cropPixels").and_then(Value::as_u64).unwrap_or(1);
+        let pixels = f.get("__fillPixels").and_then(Value::as_u64).unwrap_or(1);
         let size = f.get("__cropSize").and_then(Value::as_str).unwrap_or("selected");
         let price = match f.get("model").and_then(Value::as_str).unwrap_or("flux1Fill") {
             "flux2Pro" => {
@@ -334,7 +334,7 @@ pub fn body(ui: &mut egui::Ui, f: &mut Map<String, Value>) {
             }
             "geminiPro" => "Gemini 3 Pro Image Edit: approximately $0.15 per 1K result. Selection is a guide, not a model mask.".to_string(),
             _ => format!(
-                "FLUX.1 Pro Fill: approximately ${:.2} ($0.05 per started MP). Uses an actual selection mask.",
+                "FLUX.1 Pro Fill: approximately ${:.2} ($0.05 per started MP of square padded input). Uses an actual selection mask.",
                 pixels.div_ceil(1_000_000) as f64 * 0.05
             ),
         };
