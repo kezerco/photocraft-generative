@@ -10,20 +10,19 @@ Current limitations: native desktop/CLI only; 8/16-bit RGB documents; crop at mo
 
 ## Windows trial
 
-**Easiest:** download the unsigned portable ZIP from [this fork's Releases](https://github.com/kezerco/photocraft-generative/releases), extract all files to a folder, then double-click **`START-PHOTOCRAFT.cmd`**. Paste your fal.ai API key *at the prompt* (nothing appears while you paste). Do not type it inside the launcher. Use the launcher each time; it passes the key to the app for that run without storing it in preferences. `portable.txt` keeps the fork's settings beside the app.
+**Easiest:** download the unsigned portable ZIP from [this fork's Releases](https://github.com/kezerco/photocraft-generative/releases), extract all files to a folder, then double-click **`photocraft.exe`**. There is no batch file. After selecting part of an image, **right-click › Generative Fill…** (or **Edit › Generative Fill…**); paste your fal.ai API key into the dialog on the first use. It is stored in **Windows Credential Manager for your Windows account**, not in the document, prefs, or portable folder. On later launches, leave the key box empty to use the saved key; entering a different one replaces it. `portable.txt` keeps the fork's non-secret settings beside the app. A process-level `FAL_KEY` override takes precedence if you explicitly set one.
 
 **Build from source instead:** install [Rust (MSVC)](https://rustup.rs/) and Visual Studio Build Tools with the **Desktop development with C++** workload, then run in PowerShell from the source checkout:
 
 ```powershell
 cargo build --release --locked -p photocraft
 Copy-Item .\packaging\windows\portable.txt .\target\release\portable.txt
-Copy-Item .\packaging\windows\START-PHOTOCRAFT.cmd .\target\release\START-PHOTOCRAFT.cmd
 cd .\target\release
 ```
 
 The [Generative Fill Windows workflow](https://github.com/kezerco/photocraft-generative/actions/workflows/generative-windows.yml) creates unsigned Windows builds in Actions. Releases provide an easier download. Test on copies of your renders; don't bypass your organization's Windows security policies.
 
-Register an account at [fal.ai](https://fal.ai), add a small balance, then create an API key. **When using the release ZIP, the launcher handles this**. If launching manually from PowerShell in the directory containing `photocraft.exe`, run:
+Register an account at [fal.ai](https://fal.ai), add a small balance, then create an API key. **For Windows desktop use, paste the key into the Generative Fill dialog**; you can then launch `photocraft.exe` directly every time. Headless/CLI users (or anyone who prefers not to save a key) can instead launch from PowerShell in the directory containing `photocraft.exe`:
 
 ```powershell
 $env:FAL_KEY = [System.Net.NetworkCredential]::new('', (Read-Host 'fal.ai API key' -AsSecureString)).Password
@@ -31,9 +30,9 @@ $env:FAL_KEY = [System.Net.NetworkCredential]::new('', (Read-Host 'fal.ai API ke
 Remove-Item Env:FAL_KEY
 ```
 
-This environment variable belongs to the launched process; the fork does not store it in preferences or documents. The prompt avoids putting the key in your PowerShell history. Do not put keys in PhotoCraft command JSON, screenshots, GitHub issues, GitHub Actions, or committed files. Starting the app from Explorer won't inherit a key set only inside PowerShell.
+The optional environment variable belongs to the launched process and overrides a saved key; the fork does not store either in preferences or documents. The prompt avoids putting the key in your PowerShell history. Do not put keys in PhotoCraft command JSON, screenshots, GitHub issues, GitHub Actions, or committed files. Starting the app from Explorer won't inherit a key set only inside PowerShell; it will use the key saved by Windows Credential Manager instead.
 
-1. Save a copy of your render, select a small region, then choose **Edit › Generative Fill…**.
+1. Save a copy of your render, select a small region, then **right-click › Generative Fill…** (or use **Edit › Generative Fill…**). Enter your API key in the dialog on the first use.
 2. Pick a model, adjust the prefilled “Make it realistic” prompt and edge margin if needed, then tick **Agree to paid API request**; press OK. If you choose FLUX.2 or Gemini, a second checkbox explicitly warns that the selection is not an exact model mask. The dialog shows the crop dimensions and indicative pricing. Check the live provider prices for [masked FLUX.1 Fill](https://fal.ai/models/fal-ai/flux-pro/v1/fill), [FLUX.2 Pro Edit](https://fal.ai/models/fal-ai/flux-2-pro/edit) or [Gemini Pro Edit](https://fal.ai/models/fal-ai/nano-banana-pro/edit) before spending.
 3. Compare the returned layer with the original. Disable/remove it if the face, texture or geometry is not correct. If the model rejects the image or returns an incompatible aspect ratio, the command reports an error without changing the document, **but the provider may still charge**.
 

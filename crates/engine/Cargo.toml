@@ -40,6 +40,11 @@ flate2 = { workspace = true }
 base64 = "0.22"
 ureq = { version = "2.12", features = ["json"] }
 
+# Store fal.ai keys in the current Windows user's Credential Manager, not in
+# project files, preferences, command params, environment or the registry.
+[target.'cfg(windows)'.dependencies]
+keyring = { version = "3.6.3", default-features = false, features = ["windows-native"] }
+
 [dev-dependencies]
 photocraft-affinity = { workspace = true, features = ["synth"] }
 # Synthetic camera raw files for the open tests.

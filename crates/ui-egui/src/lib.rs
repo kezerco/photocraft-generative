@@ -65,6 +65,8 @@ pub mod filter_dialog;
 #[cfg(not(target_arch = "wasm32"))]
 mod filter_preview_worker;
 pub mod gallery_ui;
+#[cfg(windows)]
+mod generative_key_ui;
 pub mod gpu_canvas;
 pub mod gpu_status;
 pub mod gradient_ui;
@@ -329,6 +331,12 @@ pub struct PhotocraftApp {
     pub session: Session,
     pub ui: UiState,
     pub services: Services,
+    /// An uncommitted fal.ai key is UI-only memory, never serialized into UiState or exposed
+    /// through ui.inspect / document history / the control protocol.
+    #[cfg(windows)]
+    pub(crate) fal_key_draft: String,
+    #[cfg(windows)]
+    pub(crate) fal_key_saved: Option<Result<bool, String>>,
     /// Canvas caches per (document, display): CPU textures hold monitor values; the GPU
     /// canvas state is shared (`canvas::GPU_OUTPUT`).
     canvases: HashMap<(DocId, u32), canvas::CanvasCache>,
@@ -516,6 +524,10 @@ impl PhotocraftApp {
             session,
             ui: UiState::default(),
             services,
+            #[cfg(windows)]
+            fal_key_draft: String::new(),
+            #[cfg(windows)]
+            fal_key_saved: None,
             canvases: HashMap::new(),
             navigator_textures: HashMap::new(),
             monitors: Default::default(),

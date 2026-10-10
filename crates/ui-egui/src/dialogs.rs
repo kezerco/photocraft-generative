@@ -207,6 +207,11 @@ pub fn show(app: &mut PhotocraftApp, ctx: &egui::Context) {
                 DialogKind::Command if fields.contains_key("__export") => crate::export_dialog::body(app, ui, &mut fields),
                 DialogKind::Command if fields.contains_key("__sizing") => crate::sizing::body(ui, &mut fields),
                 DialogKind::Command if crate::adjust_dialog::owns(&fields) => crate::adjust_dialog::body(app, ui, &mut fields),
+                #[cfg(windows)]
+                DialogKind::Command if crate::generative_key_ui::owns(&fields) => {
+                    let room = (ctx.content_rect().height() - DIALOG_CHROME).max(120.0);
+                    egui::ScrollArea::vertical().id_salt(id.with("body")).max_height(room).show(ui, |ui| crate::generative_key_ui::body(app, ui, &mut fields));
+                }
                 DialogKind::Command if fields.contains_key("__filter") => {
                     // Color Settings: the monitor profile in use can change while it is open.
                     if fields.get("__command").and_then(Value::as_str) == Some("edit.colorSettings") {
@@ -310,6 +315,10 @@ pub fn show(app: &mut PhotocraftApp, ctx: &egui::Context) {
                 let _ = confirm(app, d.id);
             }
             Some(false) => {
+                #[cfg(windows)]
+                if crate::generative_key_ui::owns(&d.fields) {
+                    app.fal_key_draft.clear();
+                }
                 app.ui.close_dialog(d.id);
                 app.filter_preview = None;
                 app.color_range = None;
@@ -377,6 +386,8 @@ pub fn confirm(app: &mut PhotocraftApp, id: u64) -> Result<Value, String> {
         DialogKind::Command if crate::color_range_ui::owns(&d.fields) => crate::color_range_ui::confirm(app, &d.fields),
         DialogKind::Command if crate::prefs_ui::owns(&d.fields) => crate::prefs_ui::confirm(app, &d.fields),
         DialogKind::Command if d.fields.contains_key("__export") => crate::export_dialog::confirm(app, &d.fields),
+        #[cfg(windows)]
+        DialogKind::Command if crate::generative_key_ui::owns(&d.fields) => crate::generative_key_ui::confirm(app, &d.fields),
         DialogKind::Command => {
             let Some(cmd) = d.fields.get("__command").and_then(Value::as_str).map(str::to_string) else {
                 app.filter_preview = None;

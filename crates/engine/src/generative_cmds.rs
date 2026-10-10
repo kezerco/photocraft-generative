@@ -179,9 +179,7 @@ fn run(s: &mut Session, p: &Value) -> Result<Value> {
     if p.get("confirmCharge").and_then(Value::as_bool) != Some(true) {
         return Err(bad("confirm the paid fal.ai request with confirmCharge: true"));
     }
-    if std::env::var("FAL_KEY").is_err() {
-        return Err(bad("set FAL_KEY before using Generative Fill"));
-    }
+    crate::fal_key::ensure_key().map_err(|e| bad(&e))?;
     let d = s.active().ok_or(EngineError::NoDocument)?;
     let doc = d.doc.clone();
     let selection = doc.selection.clone().ok_or_else(|| bad("select the area to fill first"))?;

@@ -374,6 +374,8 @@ pub(crate) fn invoke_unguarded(app: &mut PhotocraftApp, ctx: &egui::Context, id:
             {
                 let (width, height, _) = photocraft_engine::generative_cmds::estimated_cost(&app.session).map_err(|e| e.to_string())?;
                 let dialog = crate::filter_dialog::open(app, id).ok_or("Generative Fill is unavailable")?;
+                #[cfg(windows)]
+                crate::generative_key_ui::opened(app);
                 if let Some(fields) = app.ui.dialogs.iter_mut().find(|d| d.id == dialog).map(|d| &mut d.fields) {
                     let side = width.max(height);
                     fields.insert("__fillPixels".into(), json!(u64::from(side) * u64::from(side)));

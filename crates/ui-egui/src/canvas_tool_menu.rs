@@ -34,9 +34,8 @@ pub const TRANSFORM_MENU: &[Row] = &[
     Some(("Perspective", "edit.transform.perspective")),
 ];
 
-/// Photoshop's selection-tool context menu with an active selection, in its order. Its Generative
-/// Fill row has no PhotoCraft command and is left out. Rows stay visible and grey out exactly like
-/// their menu-bar twins.
+/// Photoshop's selection-tool context menu with an active selection, in its order. Rows stay
+/// visible and grey out exactly like their menu-bar twins. Generative Fill is native-only.
 pub const SELECTION_MENU: &[Row] = &[
     Some(("Deselect", "select.deselect")),
     Some(("Select Inverse", "select.inverse")),
@@ -59,6 +58,8 @@ pub const SELECTION_MENU: &[Row] = &[
     Some(("Fill…", "edit.fill")),
     Some(("Stroke…", "edit.stroke")),
     Some(("Content-Aware Fill…", "edit.contentAwareFill")),
+    #[cfg(not(target_arch = "wasm32"))]
+    Some(("Generative Fill…", "edit.generativeFill")),
     None,
     Some(("Last Filter", "filter.lastFilter")),
     None,
@@ -445,6 +446,8 @@ mod tests {
                 Some("Fill…"),
                 Some("Stroke…"),
                 Some("Content-Aware Fill…"),
+                #[cfg(not(target_arch = "wasm32"))]
+                Some("Generative Fill…"),
                 None,
                 Some("Last Filter"),
                 None,
@@ -486,6 +489,20 @@ mod tests {
         assert!(open(&mut app, Tool::Lasso, [10.0, 10.0]));
         choose(&mut app, &Context::default(), "select.all");
         assert!(app.session.active().unwrap().doc.selection.is_some());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn right_click_generative_fill_opens_dialog_without_spending() {
+        let mut app = app();
+        app.ui.tool = Tool::RectMarquee;
+        app.run("select.rect", json!({"x": 1, "y": 1, "width": 8, "height": 8})).unwrap();
+        assert!(open(&mut app, Tool::RectMarquee, [10.0, 10.0]));
+        assert!(available(&app, app.ui.canvas_tool_menu.as_ref().unwrap(), "edit.generativeFill"));
+        let journal = app.session.journal.len();
+        choose(&mut app, &Context::default(), "edit.generativeFill");
+        assert_eq!(app.ui.dialogs.last().and_then(|d| d.fields.get("__command")).and_then(serde_json::Value::as_str), Some("edit.generativeFill"));
+        assert_eq!(app.session.journal.len(), journal, "opening the dialog must not send a paid request");
     }
 
     #[test]

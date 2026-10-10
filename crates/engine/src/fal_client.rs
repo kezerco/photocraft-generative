@@ -78,10 +78,7 @@ fn response_url(body: &Value) -> Result<&str, String> {
 }
 
 pub(crate) fn fill(model: Model, image_png: &[u8], mask_png: &[u8], prompt: &str) -> Result<Vec<u8>, String> {
-    let key = std::env::var("FAL_KEY").map_err(|_| "set FAL_KEY before using Generative Fill")?;
-    if key.trim().is_empty() {
-        return Err("FAL_KEY is empty".into());
-    }
+    let key = crate::fal_key::read_key()?;
     let request = request(model, image_png, mask_png, prompt);
     let agent = ureq::AgentBuilder::new().timeout(Duration::from_secs(180)).redirects(0).build();
     let response = agent.post(model.endpoint()).set("Authorization", &format!("Key {key}")).send_json(request).map_err(|e| match e {

@@ -34,6 +34,8 @@ pub mod eraser_cmds;
 pub mod extra_cmds;
 #[cfg(not(target_arch = "wasm32"))]
 mod fal_client;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod fal_key;
 pub mod file_cmds;
 pub mod fill_cmds;
 pub mod fill_key_cmds;

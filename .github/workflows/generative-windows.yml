@@ -25,6 +25,9 @@ jobs:
           cargo check --locked -p photocraft-ui-egui -p photocraft-engine
           cargo test --locked -p photocraft-engine --lib generative_cmds
           cargo test --locked -p photocraft-engine --lib fal_client
+          cargo test --locked -p photocraft-engine --lib fal_key
+          cargo test --locked -p photocraft-ui-egui --lib generative_key_ui
+          cargo test --locked -p photocraft-ui-egui --lib right_click_generative_fill_opens_dialog_without_spending
       - name: Build desktop app
         run: cargo build --release --locked -p photocraft --target x86_64-pc-windows-msvc
       - name: Smoke-test Windows executable
@@ -39,7 +42,6 @@ jobs:
           New-Item -ItemType Directory -Force dist/portable | Out-Null
           Copy-Item target/x86_64-pc-windows-msvc/release/photocraft.exe dist/portable/
           Copy-Item packaging/windows/portable.txt dist/portable/
-          Copy-Item packaging/windows/START-PHOTOCRAFT.cmd dist/portable/
           Copy-Item packaging/windows/README-GENERATIVE.txt dist/portable/
           Copy-Item LICENSE-MIT, LICENSE-APACHE, NOTICE dist/portable/
       - name: Upload unsigned portable build
