@@ -3,12 +3,15 @@ name: Generative Fill Windows
 
 on:
   push:
-    branches: [feature/generative-fill-fal]
+    branches: [feature/generative-fill-fal, main]
   workflow_dispatch:
 
 jobs:
   windows-x64:
     runs-on: windows-latest
+    # Keep the VC runtime static as in the upstream Windows portable package.
+    env:
+      CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: -C target-feature=+crt-static
     permissions:
       contents: read
     steps:
@@ -24,12 +27,21 @@ jobs:
           cargo test --locked -p photocraft-engine --lib fal_client
       - name: Build desktop app
         run: cargo build --release --locked -p photocraft --target x86_64-pc-windows-msvc
+      - name: Smoke-test Windows executable
+        shell: pwsh
+        run: |
+          $exe = Resolve-Path target/x86_64-pc-windows-msvc/release/photocraft.exe
+          $process = Start-Process -FilePath $exe -ArgumentList '--version' -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "PhotoCraft --version exited with $($process.ExitCode)" }
       - name: Stage portable app
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist/portable | Out-Null
           Copy-Item target/x86_64-pc-windows-msvc/release/photocraft.exe dist/portable/
           Copy-Item packaging/windows/portable.txt dist/portable/
+          Copy-Item packaging/windows/START-PHOTOCRAFT.cmd dist/portable/
+          Copy-Item packaging/windows/README-GENERATIVE.txt dist/portable/
+          Copy-Item LICENSE-MIT, LICENSE-APACHE, NOTICE dist/portable/
       - name: Upload unsigned portable build
         uses: actions/upload-artifact@v4
         with:

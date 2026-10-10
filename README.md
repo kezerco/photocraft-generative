@@ -9,6 +9,11 @@
 
 <h1 align="center">PhotoCraft</h1>
 
+> [!IMPORTANT]
+> **This is the [kezerco generative-fill fork](https://github.com/kezerco/photocraft-generative), not an official PhotoCraft release.** It adds **Edit › Generative Fill…** with a selection, prompt, and new undoable layer. Choose FLUX.1 Pro Fill (true input mask), FLUX.2 Pro Edit, or Gemini Pro Edit (selection guides, not true input masks) through **fal.ai**. The rest of PhotoCraft works offline; these paid cloud edits upload the selected render crop and prompt.
+>
+> **Windows x64 preview:** Download the unsigned portable ZIP from [this fork's Releases](https://github.com/kezerco/photocraft-generative/releases), extract *all* files, then double-click **`START-PHOTOCRAFT.cmd`**. Paste your own fal.ai key when prompted; it is not stored in the app. Each confirmed edit may be billed, including failed requests. Try copies of your images first. [Setup, limitations and source-build guide →](docs/generative-fill-fork.md) · [Original PhotoCraft →](https://github.com/storytold/photocraft)
+
 <p align="center">
   <b>Image editing; an open-source, clean-room reimplementation of Adobe Photoshop, rebuilt in pure Rust.</b><br>
   Layers, masks, adjustment layers, layer styles, type, vectors, brushes and real PSD files,<br>

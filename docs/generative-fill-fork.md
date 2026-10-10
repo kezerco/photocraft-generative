@@ -1,6 +1,6 @@
 # Generative Fill (fork preview)
 
-**Status:** experimental native-only integration; untested against a paid fal.ai account and not yet verified on Windows. It is not part of the upstream PhotoCraft release.
+**Status:** experimental native-only integration, not part of the upstream PhotoCraft release. A user has successfully tested masked FLUX.1 Fill on Windows; FLUX.2 Pro and Gemini Pro have local validation tests but still need live editing/quality checks. Unsigned builds may be blocked by Windows security policies.
 
 ## What it does
 
@@ -10,19 +10,20 @@ Current limitations: native desktop/CLI only; 8/16-bit RGB documents; crop at mo
 
 ## Windows trial
 
-**You do not have to push to GitHub first.** Copy `dist/photocraft-generative-source.zip` from this working folder to your Windows PC. Install [Rust (MSVC)](https://rustup.rs/) and Visual Studio Build Tools with the **Desktop development with C++** workload, then run in PowerShell:
+**Easiest:** download the unsigned portable ZIP from [this fork's Releases](https://github.com/kezerco/photocraft-generative/releases), extract all files to a folder, then double-click **`START-PHOTOCRAFT.cmd`**. Paste your fal.ai API key *at the prompt* (nothing appears while you paste). Do not type it inside the launcher. Use the launcher each time; it passes the key to the app for that run without storing it in preferences. `portable.txt` keeps the fork's settings beside the app.
+
+**Build from source instead:** install [Rust (MSVC)](https://rustup.rs/) and Visual Studio Build Tools with the **Desktop development with C++** workload, then run in PowerShell from the source checkout:
 
 ```powershell
-Expand-Archive .\photocraft-generative-source.zip -DestinationPath "$env:USERPROFILE\photocraft-generative"
-cd "$env:USERPROFILE\photocraft-generative"
 cargo build --release --locked -p photocraft
 Copy-Item .\packaging\windows\portable.txt .\target\release\portable.txt
+Copy-Item .\packaging\windows\START-PHOTOCRAFT.cmd .\target\release\START-PHOTOCRAFT.cmd
 cd .\target\release
 ```
 
-The `Generative Fill Windows` GitHub Actions workflow can later produce an **unsigned portable build** after the feature branch is pushed. For now, test the local build on copies of your renders. An unsigned Windows app may be stopped by Windows security policies; don't bypass an organizational policy. Until a live API trial passes, do not use it on irreplaceable files.
+The [Generative Fill Windows workflow](https://github.com/kezerco/photocraft-generative/actions/workflows/generative-windows.yml) creates unsigned Windows builds in Actions. Releases provide an easier download. Test on copies of your renders; don't bypass your organization's Windows security policies.
 
-Register an account at [fal.ai](https://fal.ai), add a small prepaid balance, then create an API key. In PowerShell, from the directory containing the unsigned executable:
+Register an account at [fal.ai](https://fal.ai), add a small balance, then create an API key. **When using the release ZIP, the launcher handles this**. If launching manually from PowerShell in the directory containing `photocraft.exe`, run:
 
 ```powershell
 $env:FAL_KEY = [System.Net.NetworkCredential]::new('', (Read-Host 'fal.ai API key' -AsSecureString)).Password
