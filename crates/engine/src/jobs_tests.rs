@@ -79,6 +79,22 @@ fn a_job_applies_as_one_undo_step_and_matches_the_inline_result() {
 }
 
 #[test]
+fn free_transform_runs_as_a_job_with_the_inline_result() {
+    let quad = json!({"quad": [[20, 10], [280, 30], [260, 190], [40, 170]]});
+    let mut inline = session(300, 200);
+    inline.execute("edit.transform", quad.clone()).unwrap();
+
+    let mut s = session(300, 200);
+    let steps = s.active().unwrap().history.past_len();
+    let id = job(s.start("edit.transform", quad).unwrap());
+    let e = wait_event(&mut s, id);
+    assert!(matches!(e.outcome, JobOutcome::Done(_)), "{e:?}");
+    assert_eq!(e.label, "Free Transform");
+    assert_eq!(s.active().unwrap().history.past_len(), steps + 1, "one undo step");
+    assert_eq!(pixels(&s), pixels(&inline), "same pixels as the synchronous command");
+}
+
+#[test]
 fn cancel_leaves_the_document_byte_identical() {
     let mut s = session(1600, 1200);
     let doc_before = s.active().unwrap().doc.clone();
@@ -238,6 +254,23 @@ fn a_running_job_locks_its_document_but_not_others() {
 }
 
 #[test]
+fn jobs_list_puts_running_jobs_before_ended_ones() {
+    let mut s = session(64, 64);
+    let gate = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let done = gated_job(&mut s, &gate);
+    assert!(matches!(wait_event(&mut s, done).outcome, JobOutcome::Done(_)));
+    // A second document, so the next job doesn't wait on the first one's.
+    s.execute("file.new", json!({"width": 8, "height": 8})).unwrap();
+    let gate = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let running = gated_job(&mut s, &gate);
+    let r = s.execute("jobs.list", json!({})).unwrap();
+    let listed: Vec<_> = r["jobs"].as_array().unwrap().iter().map(|j| (j["id"].clone(), j["state"].clone())).collect();
+    assert_eq!(listed, [(json!(running.0), json!("running")), (json!(done.0), json!("done"))], "{r}");
+    gate.store(true, std::sync::atomic::Ordering::Relaxed);
+    wait_event(&mut s, running);
+}
+
+#[test]
 fn background_job_finishes_bookkeeping_on_edited_document_after_tab_switch() {
     let mut s = session(64, 64);
     let edited_doc = s.active().unwrap().doc.id;
@@ -339,6 +372,27 @@ fn content_aware_fill_and_scale_run_as_jobs() {
 }
 
 #[test]
+fn smart_filter_edits_run_as_jobs() {
+    let mut inline = session(160, 120);
+    let mut s = session(160, 120);
+    for t in [&mut inline, &mut s] {
+        t.execute("filter.convertForSmartFilters", json!({})).unwrap();
+        t.execute("filter.blur.gaussianBlur", json!({"radius": 3})).unwrap();
+        t.execute("filter.blur.motionBlur", json!({"angle": 45, "distance": 8})).unwrap();
+    }
+    inline.execute("layer.smartFilter.setVisible", json!({"index": 0})).unwrap();
+    let before = pixels(&s);
+    let steps = s.active().unwrap().history.past_len();
+    let id = job(s.start("layer.smartFilter.setVisible", json!({"index": 0})).unwrap());
+    let e = wait_event(&mut s, id);
+    assert!(matches!(e.outcome, JobOutcome::Done(_)), "{e:?}");
+    assert_eq!(s.active().unwrap().history.past_len(), steps + 1, "one undo step");
+    assert_eq!(pixels(&s), pixels(&inline), "same pixels as the synchronous command");
+    assert!(s.undo());
+    assert_eq!(pixels(&s), before);
+}
+
+#[test]
 fn content_aware_move_runs_as_a_job() {
     let mut inline = session(160, 120);
     let mut s = session(160, 120);
@@ -407,6 +461,59 @@ fn open_runs_as_a_job_and_cancel_adds_nothing() {
 
     let id = job(s.start_open("missing.psd", OpenSource::Path("/no/such/file.psd".into())).unwrap());
     assert!(matches!(wait_event(&mut s, id).outcome, JobOutcome::Failed(_)));
+}
+
+/// Ask When Opening: a file whose profile doesn't match is decoded but not added; the shell takes
+/// it once the prompt is answered. Without Ask it opens as usual.
+#[test]
+fn an_open_that_asks_about_its_profile_holds_the_document_back() {
+    let mut src = session(8, 8);
+    let mut doc = (*src.active().unwrap().doc).clone();
+    doc.icc_profile = Some(photocraft_cms::Builtin::from_id("adobe-rgb-compat").unwrap().profile().to_bytes());
+    let bytes = Arc::new(photocraft_io::export(&doc, "x.png", &Default::default()).unwrap().bytes);
+    src.close(0);
+    let mut s = Session::new();
+    s.execute("edit.colorSettings", json!({"askOnMismatch": true, "policyRgb": "preserve"})).unwrap();
+    let id = job(s.start_open("x.png", OpenSource::Bytes(Arc::clone(&bytes))).unwrap());
+    let JobOutcome::Done(v) = wait_event(&mut s, id).outcome else { panic!() };
+    assert!(s.documents().is_empty(), "held back, not opened");
+    assert_eq!((v["color"]["mismatch"].as_bool(), v["color"]["ask"].as_bool(), v["color"]["action"].as_str()), (Some(true), Some(true), Some("preserve")));
+    let held = v["held"].as_u64().unwrap();
+    let (taken, _) = s.take_held_open(held).expect("the held document");
+    assert!(taken.icc_profile.is_some());
+    assert!(s.take_held_open(held).is_none(), "taken once");
+
+    s.execute("edit.colorSettings", json!({"askOnMismatch": false})).unwrap();
+    let id = job(s.start_open("x.png", OpenSource::Bytes(bytes)).unwrap());
+    let JobOutcome::Done(v) = wait_event(&mut s, id).outcome else { panic!() };
+    assert!(v.get("held").is_none());
+    assert_eq!(s.documents().len(), 1);
+}
+
+#[test]
+fn warm_layer_bounds_visits_every_layer_and_can_be_cancelled() {
+    let mut s = session(40, 30);
+    s.execute("layer.groupLayers", json!({})).unwrap();
+    s.execute("layer.new.layer", json!({})).unwrap();
+    let doc = s.active().unwrap().doc.clone();
+    fn count(layers: &[photocraft_doc::Layer]) -> usize {
+        layers.iter().map(|l| 1 + l.children().map_or(0, count)).sum()
+    }
+    assert!(doc.layers.iter().any(|l| l.children().is_some_and(|c| !c.is_empty())), "a group with a layer in it");
+    let mut checks = 0;
+    warm_layer_bounds(&doc, || {
+        checks += 1;
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(checks, count(&doc.layers), "one check per layer, nested ones included");
+    let mut checks = 0;
+    let r = warm_layer_bounds(&doc, || {
+        checks += 1;
+        if checks > 1 { Err(EngineError::Cancelled) } else { Ok(()) }
+    });
+    assert!(matches!(r, Err(EngineError::Cancelled)));
+    assert_eq!(checks, 2, "stops at the first failed check");
 }
 
 #[test]

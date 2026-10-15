@@ -27,6 +27,9 @@ permissions:
 
 jobs:
   freebsd:
+    # Still test FreeBSD packaging PRs and manual requests in the fork; its
+    # nightly platform coverage belongs to upstream, not the Windows preview.
+    if: github.event_name != 'schedule' || github.repository == 'storytold/photocraft'
     name: FreeBSD 14 (build + test + package)
     runs-on: ubuntu-latest
     timeout-minutes: 300

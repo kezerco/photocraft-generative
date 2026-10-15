@@ -28,6 +28,8 @@ jobs:
           cargo test --locked -p photocraft-engine --lib fal_key
           cargo test --locked -p photocraft-ui-egui --lib generative_key_ui
           cargo test --locked -p photocraft-ui-egui --lib right_click_generative_fill_opens_dialog_without_spending
+      - name: Windows lint checks
+        run: cargo clippy --locked -p photocraft-engine -p photocraft-ui-egui --all-targets -- -D warnings
       - name: Build desktop app
         run: cargo build --release --locked -p photocraft --target x86_64-pc-windows-msvc
       - name: Smoke-test Windows executable

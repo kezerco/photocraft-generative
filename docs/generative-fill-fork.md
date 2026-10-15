@@ -38,6 +38,22 @@ The optional environment variable belongs to the launched process and overrides 
 
 The request uses HTTPS to fal.ai and fetches the resulting image from a permitted HTTPS host. It is a cloud workflow: the cropped render, selection mask and prompt leave your computer. No account or key is needed for the rest of PhotoCraft.
 
+## CI and notification policy
+
+Normal CI and the Windows x64 preview build remain enabled on pushes. The inherited
+macOS performance and FreeBSD workflows run on demand in this Windows-focused fork
+(and FreeBSD packaging PRs still run their checks); their nightly schedules execute
+only in upstream `storytold/photocraft`. This prevents daily alerts for platforms and
+performance baselines that this fork does not maintain. It does not claim those
+platforms pass: use **Actions → workflow → Run workflow** to test them explicitly.
+
+The October 15 sync incorporated PhotoCraft 0.9.0 at upstream commit `4e7a17cd`.
+Previously recurring failures were macOS cancellation-time performance budgets
+(P25/P49), a FreeBSD SVG font-outlining test, and a Windows-only Clippy
+`needless_return` warning in this fork's key storage. The key-storage lint is fixed;
+nightly macOS/FreeBSD runs are now scoped as described above. Your published 0.6.0
+preview stays available until a newer Windows build passes and is tested.
+
 ## Maintaining the fork
 
 The original repository is `upstream`; your fork is `origin`. On the feature branch, fetch and merge upstream updates before publishing a new build:

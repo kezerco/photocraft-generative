@@ -42,7 +42,7 @@ pub(crate) fn read_key() -> Result<String, String> {
         if key.trim().is_empty() {
             return Err("Saved fal.ai key is empty; replace it in the Generative Fill dialog".into());
         }
-        return Ok(key);
+        Ok(key)
     }
     #[cfg(not(windows))]
     Err("Set FAL_KEY before using Generative Fill".into())

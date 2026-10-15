@@ -35,6 +35,9 @@ env:
 
 jobs:
   perf:
+    # The Windows-focused fork keeps this diagnostic available manually, without
+    # inheriting upstream's nightly baseline alerts and runner costs.
+    if: github.event_name != 'schedule' || github.repository == 'storytold/photocraft'
     name: perf (macOS, Apple GPU)
     # Pinned image, not -latest: the machine class must stay fixed for comparisons.
     runs-on: macos-15

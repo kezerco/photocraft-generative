@@ -19,6 +19,9 @@ pub const SMOOTHING_STEP_MS: f64 = 16.0;
 /// space their dabs further apart (Photoshop: "the speed of the cursor determines the spacing").
 pub const SPEED_SPACING_MS: f64 = 8.0;
 
+/// Longest pixel-grid segment (in pixels) before falling back to distance spacing.
+const MAX_GRID_STEPS: f64 = 1e7;
+
 /// Densest speed spacing, in pixels between dabs (a slow, long stroke never floods the buffer).
 const MIN_SPEED_STEP: f64 = 0.5;
 /// Maximum airbrush catch-up dabs for one input segment.
@@ -59,7 +62,7 @@ impl Smoother {
     }
 
     fn active(&self) -> bool {
-        self.cfg.amount > 0.0
+        self.cfg.enabled && self.cfg.amount > 0.0
     }
 
     /// Feed one input point; returns the brush positions to paint through.
@@ -125,6 +128,14 @@ impl Smoother {
         }
     }
 
+    /// The string between the brush and the pointer: `(brush, pointer)` document positions while
+    /// smoothing holds the brush back from the last input point, `None` when they coincide (or
+    /// smoothing is off). The canvas draws it, as Photoshop does for Pulled String Mode.
+    pub fn string(&self) -> Option<([f64; 2], [f64; 2])> {
+        let (pos, last) = (self.pos?, self.last_input?);
+        (self.active() && (pos.x != last.x || pos.y != last.y)).then_some(([pos.x, pos.y], [last.x, last.y]))
+    }
+
     /// End of stroke: with Catch-Up On Stroke End the brush finishes at the last pointer position.
     pub fn finish(&mut self, out: &mut Vec<StrokePoint>) {
         if !self.active() || !self.cfg.catch_up_on_end {
@@ -182,6 +193,9 @@ pub struct PathWalker {
     /// Speed spacing (Spacing unchecked): one step per this many ms of stroke time.
     speed: Option<f64>,
     speed_acc: f64,
+    /// Pixel-grid stepping for small aliased tips: the dab-centre offset inside a pixel (see
+    /// [`PathWalker::pixel_grid`]).
+    grid: Option<f64>,
 }
 
 impl PathWalker {
@@ -197,7 +211,39 @@ impl PathWalker {
             time_acc: 0.0,
             speed: None,
             speed_acc: 0.0,
+            grid: None,
         }
+    }
+
+    /// Step pixel by pixel instead of by distance: one step per pixel along the segment's major
+    /// axis, on the line between the pixels holding its ends, each at the pixel's dab centre
+    /// (`offset` 0.5 for odd tip diameters, 0 for even ones, as `render::grid_center` snaps). A
+    /// small aliased tip (the Pencil) then draws a clean 8-connected staircase: stepping by
+    /// distance put two dabs in a row wherever the line crossed a pixel corner (#2139).
+    pub fn pixel_grid(mut self, offset: f64) -> Self {
+        self.grid = Some(offset);
+        self
+    }
+
+    /// Emits the pixel steps from `a` to `p` (see [`PathWalker::pixel_grid`]). False, emitting
+    /// nothing, when the span is not finite or implausibly long: distance spacing takes over.
+    fn grid_steps(&mut self, a: &StrokePoint, p: &StrokePoint, offset: f64, out: &mut impl FnMut(StepInput)) -> bool {
+        let cell = |v: f64| if offset > 0.0 { v.floor() } else { v.round() };
+        let (x0, y0) = (cell(a.x), cell(a.y));
+        let (dx, dy) = (cell(p.x) - x0, cell(p.y) - y0);
+        let n = dx.abs().max(dy.abs());
+        if !n.is_finite() || n > MAX_GRID_STEPS {
+            return false;
+        }
+        let steps = n as u64;
+        for i in 1..=steps {
+            let i = i as f64;
+            let mut q = lerp_pt(a, p, i / n);
+            q.x = x0 + (dx * i / n).round() + offset;
+            q.y = y0 + (dy * i / n).round() + offset;
+            self.emit(q, out);
+        }
+        true
     }
 
     /// Space steps by stroke time instead of distance ([`SPEED_SPACING_MS`]): faster movement
@@ -237,12 +283,14 @@ impl PathWalker {
             let dt = p.time - a.time;
             match self.speed.filter(|_| dt > 0.0 && dt.is_finite()) {
                 None => {
-                    while self.next_at <= len + 1e-9 {
-                        let q = lerp_pt(&a, &p, (self.next_at / len).min(1.0));
-                        self.emit(q, out);
-                        self.next_at += step_len(&q).max(0.25);
+                    if !self.grid.is_some_and(|g| self.grid_steps(&a, &p, g, out)) {
+                        while self.next_at <= len + 1e-9 {
+                            let q = lerp_pt(&a, &p, (self.next_at / len).min(1.0));
+                            self.emit(q, out);
+                            self.next_at += step_len(&q).max(0.25);
+                        }
+                        self.next_at -= len;
                     }
-                    self.next_at -= len;
                 }
                 Some(iv) => {
                     self.speed_acc += dt;
@@ -308,6 +356,16 @@ pub fn control_value(c: Control, fade_steps: u32, s: &StepInput) -> f32 {
     }
 }
 
+/// A dynamic's control value passed through its own response curve ([`Dynamic::curve`]). Controls
+/// with no 0..1 input (Off, the direction controls) read 1 and skip the curve.
+pub fn dynamic_value(d: &Dynamic, s: &StepInput) -> f32 {
+    let v = control_value(d.control, d.fade_steps, s);
+    match d.control {
+        Control::Off | Control::InitialDirection | Control::Direction => v,
+        Control::Fade | Control::PenPressure | Control::PenTilt | Control::StylusWheel | Control::Rotation => d.curve.eval(v),
+    }
+}
+
 /// Angle contributed by a control, in degrees (counter-clockwise).
 pub fn control_angle(c: Control, fade_steps: u32, s: &StepInput) -> f32 {
     let p = &s.point;
@@ -336,7 +394,7 @@ fn scalar(d: &Dynamic, s: &StepInput, r: f32) -> f32 {
         return 1.0;
     }
     let min = d.minimum.clamp(0.0, 1.0);
-    let cv = control_value(d.control, d.fade_steps, s);
+    let cv = dynamic_value(d, s);
     let v = (min + (1.0 - min) * cv) * (1.0 - d.jitter.clamp(0.0, 1.0) * r);
     v.max(min)
 }
@@ -377,7 +435,7 @@ pub fn dynamic_color(b: &BrushSettings, s: &StepInput, seed: u64, index: u64) ->
     let cd = &b.color_dynamics;
     let (fg, bg) = (b.color, b.background);
     let r = |st: u64| rand01(seed, index, st);
-    let base = if cd.fg_bg.control != Control::Off { 1.0 - control_value(cd.fg_bg.control, cd.fg_bg.fade_steps, s) } else { 0.0 };
+    let base = if cd.fg_bg.control != Control::Off { 1.0 - dynamic_value(&cd.fg_bg, s) } else { 0.0 };
     let t = (base + (1.0 - base) * cd.fg_bg.jitter.clamp(0.0, 1.0) * r(stream::FG_BG)).clamp(0.0, 1.0);
     let rgb = [fg[0] + (bg[0] - fg[0]) * t, fg[1] + (bg[1] - fg[1]) * t, fg[2] + (bg[2] - fg[2]) * t];
     let [mut h, mut sat, mut v] = rgb_to_hsv(rgb);
@@ -396,7 +454,7 @@ pub fn base_diameter(b: &BrushSettings, s: &StepInput) -> f32 {
     let mut f = 1.0;
     if sd.enabled && sd.size.control != Control::Off {
         let min = sd.size.minimum.clamp(0.0, 1.0);
-        f = min + (1.0 - min) * control_value(sd.size.control, sd.size.fade_steps, s);
+        f = min + (1.0 - min) * dynamic_value(&sd.size, s);
     } else if b.pressure_size {
         f = s.point.pressure.clamp(0.0, 1.0);
     }
@@ -482,7 +540,7 @@ impl DabBuilder {
             // Scatter.
             let mut c = Point::new(s.point.x, s.point.y);
             if sc.enabled && sc.scatter.jitter > 0.0 {
-                let cv = control_value(sc.scatter.control, sc.scatter.fade_steps, s);
+                let cv = dynamic_value(&sc.scatter, s);
                 let amt = f64::from(sc.scatter.jitter * cv * radius);
                 let (ox, oy) = (rand_signed(seed, i, stream::SCATTER_X) as f64 * amt, rand_signed(seed, i, stream::SCATTER_Y) as f64 * amt);
                 if sc.both_axes {
@@ -628,13 +686,23 @@ impl DabGenerator {
         self.walker.interval.is_some() || self.smoother.lagging()
     }
 
+    /// See [`Smoother::string`].
+    pub fn smoothing_string(&self) -> Option<([f64; 2], [f64; 2])> {
+        self.smoother.string()
+    }
+
     pub fn new(brush: &BrushSettings, zoom: f32) -> Self {
         let brush = brush.bounded_for_render();
         let interval = brush.build_up.then(|| 1000.0 / f64::from(brush.build_up_rate.clamp(0.1, 1000.0)));
         let dual_on = brush.dual_brush.enabled;
+        let mut walker = if brush.spacing_enabled { PathWalker::new(interval) } else { PathWalker::new(interval).speed_spacing(SPEED_SPACING_MS) };
+        // A small aliased tip whose dabs are at most a pixel apart steps pixel by pixel (#2139).
+        if brush.aliased && brush.size * brush.spacing.max(0.01) <= 1.0 {
+            walker = walker.pixel_grid(f64::from(crate::render::grid_center(0.0, 0.0, brush.size).0));
+        }
         Self {
             smoother: Smoother::new(&brush.smoothing, zoom),
-            walker: if brush.spacing_enabled { PathWalker::new(interval) } else { PathWalker::new(interval).speed_spacing(SPEED_SPACING_MS) },
+            walker,
             dual_walker: dual_on.then(|| PathWalker::new(None)),
             builder: DabBuilder::new(&brush),
             dual: dual_on.then(|| DualBuilder::new(&brush)),
