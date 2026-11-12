@@ -471,6 +471,9 @@ pub const FILL_SCREEN: &str = "view.fillScreen";
 /// Transform Selection and Last Filter) in its own order.
 macro_rules! selection_menu {
     ($($fills:expr),* $(,)?) => {
+        selection_menu![$($fills),* ;]
+    };
+    ($($fills:expr),* $(,)? ; $($extra:tt)*) => {
         &[
             Some(("Deselect", "select.deselect")),
             Some(("Select Inverse", "select.inverse")),
@@ -487,8 +490,7 @@ macro_rules! selection_menu {
             Some(("Free Transform", "edit.freeTransform")),
             Some(("Transform Selection", "select.transformSelection")),
             $($fills,)*
-            #[cfg(not(target_arch = "wasm32"))]
-            Some(("Generative Fill…", "edit.generativeFill")),
+            $($extra)*
             None,
             Some(("Last Filter", "filter.lastFilter")),
             None,
@@ -506,7 +508,9 @@ pub const SELECTION_MENU: &[Row] = selection_menu![
     Some(("Delete and Fill Selection", "edit.deleteAndFillSelection")),
     Some(("Fill…", "edit.fill")),
     Some(("Stroke…", "edit.stroke")),
-    Some(("Content-Aware Fill…", "edit.contentAwareFill")),
+    Some(("Content-Aware Fill…", "edit.contentAwareFill"));
+    #[cfg(not(target_arch = "wasm32"))]
+    Some(("Generative Fill…", "edit.generativeFill")),
 ];
 
 /// The selection tools' context menu with nothing selected: making a selection.
