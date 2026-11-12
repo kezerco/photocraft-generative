@@ -107,14 +107,15 @@ pub fn rename_noreplace(from: &Path, to: &Path) -> io::Result<()> {
 
 /// Use fallback only when the exclusive rename primitive itself is unsupported.
 fn unsupported_rename(error: &io::Error) -> bool {
-    if error.kind() == io::ErrorKind::Unsupported {
-        return true;
-    }
     #[cfg(unix)]
-    if matches!(error.raw_os_error(), Some(code) if code == rustix::io::Errno::INVAL.raw_os_error() || code == rustix::io::Errno::NOSYS.raw_os_error()) {
-        return true;
+    {
+        error.kind() == io::ErrorKind::Unsupported
+            || matches!(error.raw_os_error(), Some(code) if code == rustix::io::Errno::INVAL.raw_os_error() || code == rustix::io::Errno::NOSYS.raw_os_error())
     }
-    false
+    #[cfg(not(unix))]
+    {
+        error.kind() == io::ErrorKind::Unsupported
+    }
 }
 
 /// Linking claims an absent destination atomically; a later unlink failure is already published.
@@ -357,6 +358,20 @@ mod tests {
         assert!(!error.error.to_string().contains("PC000001.TM1"));
         let error = retry_stage_cleanup(failure(), temp, |_| Err(io::ErrorKind::NotFound.into()));
         assert!(!error.error.to_string().contains("PC000001.TM1"));
+    }
+
+    #[test]
+    fn unsupported_rename_preserves_platform_error_classification() {
+        assert!(unsupported_rename(&io::ErrorKind::Unsupported.into()));
+        for kind in [io::ErrorKind::AlreadyExists, io::ErrorKind::PermissionDenied, io::ErrorKind::NotFound, io::ErrorKind::InvalidInput] {
+            assert!(!unsupported_rename(&kind.into()), "{kind:?} must not enable the fallback");
+        }
+        #[cfg(unix)]
+        for code in [rustix::io::Errno::INVAL.raw_os_error(), rustix::io::Errno::NOSYS.raw_os_error()] {
+            assert!(unsupported_rename(&io::Error::from_raw_os_error(code)));
+        }
+        #[cfg(windows)]
+        assert!(!unsupported_rename(&io::Error::from_raw_os_error(87)), "Windows ERROR_INVALID_PARAMETER is not an unsupported primitive");
     }
 
     /// Ordinary rename failures must not trigger a second filesystem mutation route.
