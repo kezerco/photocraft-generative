@@ -54,6 +54,20 @@ Previously recurring failures were macOS cancellation-time performance budgets
 nightly macOS/FreeBSD runs are now scoped as described above. Your published 0.6.0
 preview stays available until a newer Windows build passes and is tested.
 
+## November 2026 update
+
+The November 12 sync incorporates upstream PhotoCraft **0.23.1** through commit
+`60c4d856d`, retaining this fork's Generative Fill command, paid-request confirmation,
+selection context menu, and Windows Credential Manager key. Upstream reorganized
+commands, dialogs, menus and localization into new modules and shared libraries;
+the fork integration now follows those paths. New fork-specific strings fall back
+to English where the shared translation catalogs lack them.
+
+Older preview ZIPs remain available for rollback. Extract an updated preview into a
+new folder and test copies of documents before moving your work to it. This fork's
+preview releases are on `kezerco/photocraft-generative`; upstream releases do not
+include its fal.ai integration.
+
 ## Maintaining the fork
 
 The original repository is `upstream`; your fork is `origin`. On the feature branch, fetch and merge upstream updates before publishing a new build:
